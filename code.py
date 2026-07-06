@@ -1,24 +1,29 @@
 """
-Integrated Steel Supply Chain — Single Source of Truth (Demo Dashboard)
-=======================================================================
-A teaching dashboard for a Tata Steel session on digital execution.
+Integrated Steel Digital Control Tower — Executive Training Dashboard
+====================================================================
 
-The point it lands: procurement (SAP), logistics (TMS), the plant (MES) and
-sales (CRM) each hold *a* number. This governed layer stitches them into
-*the* number — with an exceptions pane that turns a report into an
-execution tool.
+A realistic synthetic Streamlit dashboard for teaching digital supply chain
+control towers to participants from the steel industry.
 
-The data is synthetic but curated so a realistic exception is always present:
-  -> Coking coal at Kalinganagar is below safety stock, with days-of-cover
-     shorter than the ETA of the next inbound vessel (delayed by port
-     congestion + cyclone). That gap is the "firefight" in the caselet.
+Core teaching point:
+Procurement, logistics, production, inventory, sales, finance and ESG systems
+all hold partial truths. A digital control tower integrates them into a single
+operational picture, highlights exceptions, estimates business impact, and
+supports scenario-based decision making.
 
 Run:
-    pip install -r requirements.txt
-    streamlit run app.py
+    pip install streamlit pandas numpy plotly
+    streamlit run steel_control_tower_app.py
+
+Data:
+    Synthetic but curated for training. Do not load confidential company data
+    into this shared demo.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -26,153 +31,259 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-# --------------------------------------------------------------------------- #
-# Page config + light styling
-# --------------------------------------------------------------------------- #
+# -----------------------------------------------------------------------------
+# Page configuration
+# -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Steel SCM — Single Source of Truth",
+    page_title="Steel Digital Control Tower",
     page_icon="🏭",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+NOW = datetime.now()
+TODAY = NOW.date()
+
+
+def eta(days: int):
+    return (NOW + timedelta(days=days)).date()
+
+
+# -----------------------------------------------------------------------------
+# Styling
+# -----------------------------------------------------------------------------
 st.markdown(
     """
     <style>
-      .block-container {padding-top: 1.6rem; padding-bottom: 2rem;}
-      .source-badge {
-        display:inline-block; padding:3px 10px; margin-right:6px;
-        border-radius:12px; font-size:0.72rem; font-weight:600;
-        background:#1f2a37; color:#cbd5e1; border:1px solid #334155;
-      }
-      .alert-card {
-        border-radius:8px; padding:10px 14px; margin-bottom:8px;
-        background:#111827; border-left:5px solid #64748b;
-      }
-      .alert-red    {border-left-color:#ef4444;}
-      .alert-amber  {border-left-color:#f59e0b;}
-      .alert-green  {border-left-color:#22c55e;}
-      .alert-title  {font-weight:700; font-size:0.92rem; margin-bottom:2px;}
-      .alert-body   {font-size:0.82rem; color:#94a3b8;}
-      .tag {font-size:0.68rem; padding:1px 7px; border-radius:10px;
-            background:#334155; color:#e2e8f0; margin-left:6px;}
+        .block-container {
+            padding-top: 1.2rem;
+            padding-bottom: 2rem;
+        }
+        .main-title {
+            font-size: 2.2rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            margin-bottom: 0.2rem;
+        }
+        .subtitle {
+            color: #94a3b8;
+            font-size: 0.95rem;
+            margin-bottom: 1rem;
+        }
+        .kpi-card {
+            border: 1px solid #334155;
+            border-radius: 14px;
+            padding: 14px 16px;
+            background: linear-gradient(180deg, #111827 0%, #0f172a 100%);
+            min-height: 118px;
+        }
+        .kpi-label {
+            color: #94a3b8;
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .kpi-value {
+            color: #f8fafc;
+            font-size: 1.72rem;
+            font-weight: 800;
+            margin-top: 4px;
+        }
+        .kpi-delta-good {color: #22c55e; font-size: 0.82rem; font-weight: 700;}
+        .kpi-delta-bad {color: #ef4444; font-size: 0.82rem; font-weight: 700;}
+        .kpi-delta-watch {color: #f59e0b; font-size: 0.82rem; font-weight: 700;}
+        .risk-card {
+            border-radius: 12px;
+            padding: 13px 15px;
+            background: #111827;
+            border: 1px solid #334155;
+            margin-bottom: 10px;
+        }
+        .risk-red {border-left: 6px solid #ef4444;}
+        .risk-amber {border-left: 6px solid #f59e0b;}
+        .risk-green {border-left: 6px solid #22c55e;}
+        .risk-title {font-weight: 800; font-size: 0.98rem; color: #f8fafc;}
+        .risk-body {font-size: 0.86rem; color: #cbd5e1; margin-top: 4px;}
+        .risk-meta {font-size: 0.75rem; color: #94a3b8; margin-top: 6px;}
+        .pill {
+            display:inline-block;
+            padding: 3px 9px;
+            border-radius: 999px;
+            background:#1e293b;
+            color:#cbd5e1;
+            border:1px solid #334155;
+            font-size:0.72rem;
+            margin-right:5px;
+            margin-top:5px;
+        }
+        .section-note {
+            color: #94a3b8;
+            font-size: 0.86rem;
+        }
+        .action-card {
+            border-radius: 12px;
+            padding: 14px 16px;
+            background:#0f172a;
+            border:1px solid #334155;
+            margin-bottom:10px;
+        }
+        .action-title {font-weight:800; color:#f8fafc;}
+        .action-body {font-size:0.86rem; color:#cbd5e1; margin-top:4px;}
+        .small-muted {font-size:0.78rem; color:#94a3b8;}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# Anchor "today" to run-time so inbound ETAs always read as near-future.
-NOW = datetime.now()
-TODAY = NOW.date()
 
-
-def d(days):
-    """Return a date `days` from today (used for ETAs)."""
-    return (NOW + timedelta(days=days)).date()
-
-
-# --------------------------------------------------------------------------- #
-# Curated synthetic data (source system noted per table)
-# --------------------------------------------------------------------------- #
+# -----------------------------------------------------------------------------
+# Synthetic data layer
+# -----------------------------------------------------------------------------
 @st.cache_data
-def raw_materials():
-    """Procurement (SAP) stock levels reconciled with plant (MES) consumption."""
+def raw_materials() -> pd.DataFrame:
     rows = [
-        # plant, material, uom, stock, safety_stock, daily_consumption, source
-        ("Jamshedpur",   "Coking Coal",   "t", 210_000, 168_000, 12_000),
-        ("Jamshedpur",   "Iron Ore",      "t", 340_000, 220_000, 22_000),
-        ("Jamshedpur",   "Limestone",     "t",  48_000,  40_000,  3_500),
-        ("Jamshedpur",   "Ferro Silicon", "t",     900,   1_200,     60),
-        ("Kalinganagar", "Coking Coal",   "t",  42_000, 114_000,  9_500),  # << exception
-        ("Kalinganagar", "Iron Ore",      "t", 180_000, 130_000, 15_000),
-        ("Kalinganagar", "Limestone",     "t",  30_000,  26_000,  2_600),
-        ("Kalinganagar", "Dolomite",      "t",  14_000,  12_000,  1_100),
-        ("Angul",        "Coking Coal",   "t",  95_000,  90_000,  8_000),  # watch
-        ("Angul",        "Iron Ore",      "t", 120_000, 110_000, 12_500),
-        ("Angul",        "Manganese Ore", "t",   5_000,   4_500,    380),
+        # plant, material, category, stock, safety, daily_use, unit_cost_lakh_per_t, supplier_risk
+        ("Jamshedpur", "Coking Coal", "Fuel", 210000, 168000, 12000, 0.18, 0.36),
+        ("Jamshedpur", "Iron Ore", "Ore", 340000, 220000, 22000, 0.055, 0.22),
+        ("Jamshedpur", "Limestone", "Flux", 48000, 40000, 3500, 0.015, 0.18),
+        ("Jamshedpur", "Ferro Silicon", "Alloy", 900, 1200, 60, 1.10, 0.52),
+        ("Kalinganagar", "Coking Coal", "Fuel", 42000, 114000, 9500, 0.18, 0.81),
+        ("Kalinganagar", "Iron Ore", "Ore", 180000, 130000, 15000, 0.055, 0.25),
+        ("Kalinganagar", "Limestone", "Flux", 30000, 26000, 2600, 0.015, 0.21),
+        ("Kalinganagar", "Dolomite", "Flux", 14000, 12000, 1100, 0.020, 0.20),
+        ("Angul", "Coking Coal", "Fuel", 95000, 90000, 8000, 0.18, 0.58),
+        ("Angul", "Iron Ore", "Ore", 120000, 110000, 12500, 0.055, 0.29),
+        ("Angul", "Manganese Ore", "Alloy", 5000, 4500, 380, 0.42, 0.41),
+        ("Dolvi", "Coking Coal", "Fuel", 76000, 82000, 7100, 0.19, 0.62),
+        ("Dolvi", "Iron Ore", "Ore", 98000, 92000, 9300, 0.060, 0.31),
     ]
     df = pd.DataFrame(
         rows,
-        columns=["plant", "material", "uom", "stock", "safety_stock", "daily_use"],
+        columns=[
+            "plant",
+            "material",
+            "category",
+            "stock_t",
+            "safety_stock_t",
+            "daily_use_t",
+            "unit_cost_lakh_per_t",
+            "supplier_risk",
+        ],
     )
-    df["days_of_cover"] = (df["stock"] / df["daily_use"]).round(1)
-    df["safety_days"] = (df["safety_stock"] / df["daily_use"]).round(1)
-    df["below_safety"] = df["stock"] < df["safety_stock"]
-    df["source"] = "SAP ↔ MES"
+    df["days_cover"] = (df["stock_t"] / df["daily_use_t"]).round(1)
+    df["safety_days"] = (df["safety_stock_t"] / df["daily_use_t"]).round(1)
+    df["inventory_value_cr"] = (df["stock_t"] * df["unit_cost_lakh_per_t"] / 100).round(1)
+    df["below_safety"] = df["stock_t"] < df["safety_stock_t"]
+    df["source"] = "SAP MM ↔ MES"
     return df
 
 
 @st.cache_data
-def inbound():
-    """In-transit / port / rake visibility (TMS)."""
+def inbound_shipments() -> pd.DataFrame:
     rows = [
-        # material, mode, id, qty, origin, destination, plant, status, eta, reason, position
-        ("Coking Coal", "Vessel", "MV Cape Prosperity", 75_000, "Dalrymple Bay, AU",
-         "Dhamra Port", "Kalinganagar", "Delayed", d(6),
-         "Port congestion + cyclone diversion", "Anchored — Dhamra outer anchorage"),
-        ("Coking Coal", "Vessel", "MV Ocean Vega", 80_000, "Hay Point, AU",
-         "Paradip Port", "Angul", "On time", d(9),
-         "—", "At sea — Bay of Bengal"),
-        ("Iron Ore", "Rake", "RR-4471", 3_800, "Joda Mines",
-         "Kalinganagar", "Kalinganagar", "On time", d(1),
-         "—", "In transit — Keonjhar section"),
-        ("Limestone", "Rake", "RR-2290", 3_600, "Birmitrapur",
-         "Jamshedpur", "Jamshedpur", "On time", d(2),
-         "—", "In transit"),
-        ("Coking Coal", "Rake", "RR-5108", 3_700, "Dhamra Port",
-         "Kalinganagar", "Kalinganagar", "Delayed", d(3),
-         "Rake availability at port", "Awaiting placement — Dhamra sidings"),
-        ("Ferro Silicon", "Road", "TRK-8821", 120, "Vendor — Raipur",
-         "Jamshedpur", "Jamshedpur", "On time", d(1),
-         "—", "In transit — NH-49"),
+        ("Coking Coal", "Vessel", "MV Cape Prosperity", 75000, "Dalrymple Bay", "Dhamra Port", "Kalinganagar", "Delayed", eta(6), "Cyclone diversion + port congestion", "Anchored at outer anchorage", 0.85),
+        ("Coking Coal", "Rake", "RR-5108", 3700, "Dhamra Port", "Kalinganagar", "Kalinganagar", "Delayed", eta(3), "Rake placement delay", "Awaiting placement", 0.72),
+        ("Coking Coal", "Vessel", "MV Ocean Vega", 80000, "Hay Point", "Paradip Port", "Angul", "On time", eta(9), "—", "Bay of Bengal", 0.25),
+        ("Iron Ore", "Rake", "RR-4471", 3800, "Joda Mines", "Kalinganagar", "Kalinganagar", "On time", eta(1), "—", "Keonjhar section", 0.18),
+        ("Limestone", "Rake", "RR-2290", 3600, "Birmitrapur", "Jamshedpur", "Jamshedpur", "On time", eta(2), "—", "In transit", 0.15),
+        ("Ferro Silicon", "Road", "TRK-8821", 120, "Vendor — Raipur", "Jamshedpur", "Jamshedpur", "On time", eta(1), "—", "NH-49", 0.20),
+        ("Iron Ore", "Rake", "RR-1192", 4100, "Noamundi", "Jamshedpur", "Jamshedpur", "On time", eta(1), "—", "Tatanagar approach", 0.12),
+        ("Coking Coal", "Vessel", "MV Black Diamond", 69000, "Newcastle", "Jaigarh Port", "Dolvi", "Delayed", eta(5), "Berth congestion", "At sea", 0.61),
     ]
     df = pd.DataFrame(
         rows,
-        columns=["material", "mode", "shipment_id", "qty", "origin",
-                 "destination", "plant", "status", "eta", "reason", "position"],
+        columns=[
+            "material",
+            "mode",
+            "shipment_id",
+            "qty_t",
+            "origin",
+            "destination",
+            "plant",
+            "status",
+            "eta",
+            "delay_reason",
+            "position",
+            "delay_probability",
+        ],
     )
     df["eta_days"] = (pd.to_datetime(df["eta"]) - pd.Timestamp(TODAY)).dt.days
-    df["source"] = "TMS"
+    df["source"] = "TMS / Port Community System"
     return df
 
 
 @st.cache_data
-def finished_goods():
-    """Finished-goods inventory & aging (MES stockyard ↔ CRM allocation)."""
+def production_units() -> pd.DataFrame:
     rows = [
-        # grade, location, qty, age_days, threshold_days
-        ("HR Coil",    "Jamshedpur SY",   9_400, 12, 30),
-        ("HR Coil",    "Kolkata SY",      6_800, 34, 30),   # breach
-        ("CR Coil",    "Kalinganagar SY", 5_100, 18, 30),
-        ("CR Coil",    "Mumbai SY",       4_200, 47, 30),   # breach
-        ("Galvanized", "Delhi SY",        1_500, 52, 45),   # breach
-        ("Galvanized", "Jamshedpur SY",   2_300, 22, 45),
-        ("TMT Rebar",  "Kalinganagar SY", 7_600,  9, 25),
-        ("TMT Rebar",  "Delhi SY",        3_400, 15, 25),
-        ("Wire Rod",   "Kolkata SY",      2_800, 20, 30),
-    ]
-    df = pd.DataFrame(
-        rows, columns=["grade", "location", "qty", "age_days", "threshold_days"]
-    )
-    df["aging_breach"] = df["age_days"] > df["threshold_days"]
-    df["source"] = "MES ↔ CRM"
-    return df
-
-
-@st.cache_data
-def dispatch_otif():
-    """Dispatch-vs-plan and OTIF by region (TMS ↔ CRM)."""
-    rows = [
-        # region, planned_t, actual_t, on_time_pct, in_full_pct, otif_pct
-        ("North", 14_000, 13_400, 95, 96, 92),
-        ("East",  20_000, 19_600, 97, 98, 95),
-        ("West",  13_000,  9_800, 82, 88, 78),   # the gap
-        ("South", 11_000, 10_400, 92, 94, 88),
+        # plant, unit, planned_t, actual_t, utilization, availability, yield, energy_gcal_t, status, constraint
+        ("Jamshedpur", "Blast Furnace", 13500, 12950, 96, 94, 98.2, 5.52, "Stable", "None"),
+        ("Jamshedpur", "BOF Shop", 12800, 12500, 97, 96, 97.8, 0.82, "Stable", "None"),
+        ("Jamshedpur", "Hot Strip Mill", 9800, 9200, 89, 91, 96.4, 0.44, "Watch", "Slab mix"),
+        ("Kalinganagar", "Blast Furnace", 11800, 9800, 83, 87, 97.1, 5.88, "At risk", "Coking coal cover"),
+        ("Kalinganagar", "BOF Shop", 11200, 10100, 90, 91, 97.0, 0.86, "Watch", "Hot metal availability"),
+        ("Kalinganagar", "CRM", 7600, 6700, 84, 88, 94.9, 0.51, "Watch", "Input coil availability"),
+        ("Angul", "Blast Furnace", 9200, 8700, 91, 92, 97.5, 5.76, "Watch", "Coal buffer"),
+        ("Angul", "Plate Mill", 6100, 5900, 92, 93, 95.8, 0.49, "Stable", "None"),
+        ("Dolvi", "Blast Furnace", 8600, 8050, 89, 90, 97.4, 5.81, "Watch", "Port delay"),
+        ("Dolvi", "HSM", 7200, 6900, 91, 92, 96.1, 0.46, "Stable", "None"),
     ]
     df = pd.DataFrame(
         rows,
-        columns=["region", "planned_t", "actual_t",
-                 "on_time_pct", "in_full_pct", "otif_pct"],
+        columns=[
+            "plant",
+            "unit",
+            "planned_t",
+            "actual_t",
+            "utilization_pct",
+            "availability_pct",
+            "yield_pct",
+            "energy_gcal_t",
+            "status",
+            "constraint",
+        ],
+    )
+    df["production_gap_t"] = df["planned_t"] - df["actual_t"]
+    df["source"] = "MES / Level-3 Automation"
+    return df
+
+
+@st.cache_data
+def finished_goods() -> pd.DataFrame:
+    rows = [
+        ("HR Coil", "Jamshedpur SY", "East", 9400, 12, 30, 54),
+        ("HR Coil", "Kolkata SY", "East", 6800, 34, 30, 53),
+        ("CR Coil", "Kalinganagar SY", "East", 5100, 18, 30, 67),
+        ("CR Coil", "Mumbai SY", "West", 4200, 47, 30, 68),
+        ("Galvanized", "Delhi SY", "North", 1500, 52, 45, 76),
+        ("Galvanized", "Jamshedpur SY", "East", 2300, 22, 45, 75),
+        ("TMT Rebar", "Kalinganagar SY", "East", 7600, 9, 25, 46),
+        ("TMT Rebar", "Delhi SY", "North", 3400, 15, 25, 47),
+        ("Wire Rod", "Kolkata SY", "East", 2800, 20, 30, 52),
+        ("Plate", "Angul SY", "South", 3900, 39, 30, 62),
+        ("HR Coil", "Dolvi SY", "West", 5800, 28, 30, 55),
+    ]
+    df = pd.DataFrame(
+        rows,
+        columns=["grade", "location", "region", "qty_t", "age_days", "threshold_days", "realization_k_per_t"],
+    )
+    df["aging_breach"] = df["age_days"] > df["threshold_days"]
+    df["inventory_value_cr"] = (df["qty_t"] * df["realization_k_per_t"] / 1000).round(1)
+    df["source"] = "MES Stockyard ↔ CRM Allocation"
+    return df
+
+
+@st.cache_data
+def dispatch_otif() -> pd.DataFrame:
+    rows = [
+        ("North", 14000, 13400, 95, 96, 92, "Truck availability normal"),
+        ("East", 20000, 19600, 97, 98, 95, "Stable"),
+        ("West", 13000, 9800, 82, 88, 78, "Material short at Mumbai yard"),
+        ("South", 11000, 10400, 92, 94, 88, "Rail ETA slippage"),
+    ]
+    df = pd.DataFrame(
+        rows,
+        columns=["region", "planned_t", "actual_t", "on_time_pct", "in_full_pct", "otif_pct", "constraint"],
     )
     df["dispatch_pct"] = (df["actual_t"] / df["planned_t"] * 100).round(1)
     df["gap_t"] = df["planned_t"] - df["actual_t"]
@@ -181,375 +292,763 @@ def dispatch_otif():
 
 
 @st.cache_data
-def rake_turnaround():
-    """Rake turnaround by loading point (TMS)."""
+def logistics_assets() -> pd.DataFrame:
     rows = [
-        ("Jamshedpur",    7.2, 8.0, 11),
-        ("Kalinganagar",  9.8, 8.0,  9),
-        ("Angul",         8.4, 8.0,  7),
-        ("Kolkata SY",   14.2, 8.0,  4),   # breach
+        ("Jamshedpur", 7.2, 8.0, 11, 2, 94),
+        ("Kalinganagar", 9.8, 8.0, 9, 5, 76),
+        ("Angul", 8.4, 8.0, 7, 3, 82),
+        ("Kolkata SY", 14.2, 8.0, 4, 6, 63),
+        ("Dolvi", 10.8, 8.0, 6, 4, 70),
     ]
     df = pd.DataFrame(
-        rows, columns=["loading_point", "turnaround_h", "target_h", "rakes"]
+        rows,
+        columns=["node", "turnaround_h", "target_h", "active_rakes", "waiting_rakes", "asset_health_pct"],
     )
     df["breach"] = df["turnaround_h"] > df["target_h"]
-    df["source"] = "TMS"
+    df["source"] = "TMS / Rail Yard System"
+    return df
+
+
+@st.cache_data
+def supplier_scorecard() -> pd.DataFrame:
+    rows = [
+        ("CoalCo Australia", "Coking Coal", 320, 91, 7.2, 420, 0.69),
+        ("Joda Mines", "Iron Ore", 180, 97, 1.1, 95, 0.22),
+        ("Noamundi Mines", "Iron Ore", 160, 98, 0.8, 72, 0.18),
+        ("Raipur Ferro Alloys", "Ferro Silicon", 42, 86, 4.5, 1200, 0.63),
+        ("Birmitrapur Minerals", "Limestone", 38, 94, 2.8, 180, 0.30),
+        ("Newcastle Coal Export", "Coking Coal", 210, 88, 8.1, 510, 0.74),
+    ]
+    df = pd.DataFrame(
+        rows,
+        columns=["supplier", "material", "monthly_spend_cr", "otif_pct", "avg_delay_days", "quality_ppm", "risk_score"],
+    )
+    df["source"] = "SAP Ariba / Supplier Portal"
+    return df
+
+
+@st.cache_data
+def esg_metrics() -> pd.DataFrame:
+    rows = [
+        ("Jamshedpur", 2.12, 2.05, 5.52, 5.45, 18, 22),
+        ("Kalinganagar", 2.28, 2.08, 5.88, 5.50, 14, 24),
+        ("Angul", 2.22, 2.10, 5.76, 5.55, 16, 21),
+        ("Dolvi", 2.19, 2.09, 5.81, 5.52, 15, 23),
+    ]
+    df = pd.DataFrame(
+        rows,
+        columns=[
+            "plant",
+            "co2_t_per_tcs",
+            "co2_target",
+            "energy_gcal_tcs",
+            "energy_target",
+            "scrap_mix_pct",
+            "scrap_target_pct",
+        ],
+    )
+    df["co2_gap_pct"] = ((df["co2_t_per_tcs"] / df["co2_target"] - 1) * 100).round(1)
+    df["source"] = "ESG Data Lake / Energy Meters"
     return df
 
 
 rm = raw_materials()
-inb = inbound()
+inb = inbound_shipments()
+prod = production_units()
 fg = finished_goods()
 otif = dispatch_otif()
-rake = rake_turnaround()
+logi = logistics_assets()
+supp = supplier_scorecard()
+esg = esg_metrics()
 
-# --------------------------------------------------------------------------- #
-# Sidebar — the "single source of truth" framing + filters
-# --------------------------------------------------------------------------- #
+
+# -----------------------------------------------------------------------------
+# Helper functions
+# -----------------------------------------------------------------------------
+def kpi_card(label: str, value: str, delta: str, status: str = "watch") -> None:
+    css = {
+        "good": "kpi-delta-good",
+        "bad": "kpi-delta-bad",
+        "watch": "kpi-delta-watch",
+        "neutral": "small-muted",
+    }.get(status, "kpi-delta-watch")
+    st.markdown(
+        f"""
+        <div class="kpi-card">
+            <div class="kpi-label">{label}</div>
+            <div class="kpi-value">{value}</div>
+            <div class="{css}">{delta}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def project_stockout(plant: str, material: str, extra_delay_days: int = 0, horizon: int = 30) -> Tuple[int | None, float]:
+    row = rm[(rm["plant"] == plant) & (rm["material"] == material)]
+    if row.empty:
+        return None, np.nan
+    r = row.iloc[0]
+    events = (
+        inb[(inb["plant"] == plant) & (inb["material"] == material)]
+        .assign(adjusted_eta=lambda x: x["eta_days"] + extra_delay_days)
+        .groupby("adjusted_eta")["qty_t"]
+        .sum()
+        .to_dict()
+    )
+    stock = float(r["stock_t"])
+    min_stock = stock
+    stockout_day = None
+    for day in range(1, horizon + 1):
+        stock -= float(r["daily_use_t"])
+        stock += float(events.get(day, 0))
+        min_stock = min(min_stock, stock)
+        if stock < 0 and stockout_day is None:
+            stockout_day = day
+    return stockout_day, min_stock
+
+
+def build_risks(extra_delay_days: int = 0) -> List[Dict[str, str]]:
+    risks: List[Dict[str, str]] = []
+
+    for _, r in rm[rm["below_safety"]].iterrows():
+        so_day, min_stock = project_stockout(r["plant"], r["material"], extra_delay_days)
+        if so_day is not None:
+            severity = "red"
+            probability = "High"
+            impact_cr = round(max(1.5, (r["daily_use_t"] * r["unit_cost_lakh_per_t"] / 100) * 1.8), 1)
+            body = (
+                f"{r['material']} at {r['plant']} has {r['days_cover']:.1f} days cover "
+                f"against {r['safety_days']:.1f} safety days. Scenario projects stock-out around day {so_day}."
+            )
+            action = "Expedite vessel/rake priority, rebalance coal allocation, and protect blast furnace schedule."
+        else:
+            severity = "amber"
+            probability = "Medium"
+            impact_cr = round(max(0.8, (r["daily_use_t"] * r["unit_cost_lakh_per_t"] / 100) * 0.7), 1)
+            body = (
+                f"{r['material']} at {r['plant']} is below safety stock but scheduled inbound prevents full stock-out "
+                f"within 30 days under this scenario. Buffer remains thin."
+            )
+            action = "Monitor ETA, confirm unloading slot, and avoid diverting material to lower-priority demand."
+        risks.append(
+            {
+                "severity": severity,
+                "title": f"Raw material risk — {r['material']} @ {r['plant']}",
+                "body": body,
+                "meta": f"Probability: {probability} · Estimated impact: ₹{impact_cr} Cr/day · Owner: Procurement + Logistics",
+                "action": action,
+            }
+        )
+
+    for _, r in inb[inb["status"] == "Delayed"].iterrows():
+        risks.append(
+            {
+                "severity": "amber",
+                "title": f"Inbound disruption — {r['shipment_id']}",
+                "body": f"{r['qty_t']:,} t {r['material']} for {r['plant']} delayed. Reason: {r['delay_reason']}. Revised ETA: {r['eta']:%d %b}.",
+                "meta": f"Delay probability: {r['delay_probability']:.0%} · Source: {r['source']} · Owner: Logistics Control Tower",
+                "action": "Escalate to port/rail desk, secure berth/rake slot, and test alternate supply lane.",
+            }
+        )
+
+    worst_otif = otif.sort_values("otif_pct").iloc[0]
+    risks.append(
+        {
+            "severity": "amber" if worst_otif["otif_pct"] < 90 else "green",
+            "title": f"Customer service risk — {worst_otif['region']} region",
+            "body": f"OTIF is {worst_otif['otif_pct']}%; in-full is {worst_otif['in_full_pct']}%. Gap is {worst_otif['gap_t']:,} t. Constraint: {worst_otif['constraint']}.",
+            "meta": "Owner: Sales & Operations Planning · Source: TMS ↔ CRM",
+            "action": "Reallocate aged finished goods, review customer priority, and protect high-margin dispatches.",
+        }
+    )
+
+    for _, r in fg[fg["aging_breach"]].iterrows():
+        risks.append(
+            {
+                "severity": "amber",
+                "title": f"Working-capital risk — {r['grade']} @ {r['location']}",
+                "body": f"{r['qty_t']:,} t aged {r['age_days']} days vs {r['threshold_days']} day threshold. Inventory value ₹{r['inventory_value_cr']} Cr.",
+                "meta": "Owner: Sales Allocation + Stockyard · Source: MES ↔ CRM",
+                "action": "Push liquidation plan, match to open orders, and prevent quality downgrading.",
+            }
+        )
+
+    severity_order = {"red": 0, "amber": 1, "green": 2}
+    risks = sorted(risks, key=lambda x: severity_order[x["severity"]])
+    return risks
+
+
+def render_risk_card(risk: Dict[str, str]) -> None:
+    st.markdown(
+        f"""
+        <div class="risk-card risk-{risk['severity']}">
+            <div class="risk-title">{risk['title']}</div>
+            <div class="risk-body">{risk['body']}</div>
+            <div class="risk-meta">{risk['meta']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def make_sankey(selected_plants: List[str]) -> go.Figure:
+    rm_sel = rm[rm["plant"].isin(selected_plants)]
+    prod_sel = prod[prod["plant"].isin(selected_plants)]
+    fg_total = fg["qty_t"].sum()
+    dispatch_total = otif["actual_t"].sum()
+
+    labels = [
+        "Mines & Vendors",
+        "Ports",
+        "Rail / Road",
+        "Raw Material Yard",
+        "Blast Furnace",
+        "Steelmaking",
+        "Rolling Mills",
+        "Finished Goods Yard",
+        "Customers",
+    ]
+    source = [0, 1, 2, 3, 4, 5, 6, 7]
+    target = [1, 2, 3, 4, 5, 6, 7, 8]
+    values = [
+        float(inb[inb["plant"].isin(selected_plants)]["qty_t"].sum() / 10),
+        float(inb[inb["plant"].isin(selected_plants)]["qty_t"].sum() / 12),
+        float(rm_sel["daily_use_t"].sum()),
+        float(prod_sel[prod_sel["unit"].str.contains("Blast Furnace", case=False)]["actual_t"].sum()),
+        float(prod_sel[prod_sel["unit"].str.contains("BOF", case=False)]["actual_t"].sum()),
+        float(prod_sel[prod_sel["unit"].str.contains("HSM|CRM|Mill", case=False, regex=True)]["actual_t"].sum()),
+        float(fg_total / 4),
+        float(dispatch_total),
+    ]
+    fig = go.Figure(
+        data=[
+            go.Sankey(
+                node=dict(pad=18, thickness=18, line=dict(width=0.5), label=labels),
+                link=dict(source=source, target=target, value=values),
+            )
+        ]
+    )
+    fig.update_layout(title="Material-flow digital twin: mine → port → rail → plant → customer", height=430)
+    return fig
+
+
+def scenario_outputs(extra_delay_days: int, demand_shock_pct: int, bf_constraint_pct: int) -> Dict[str, float]:
+    kg_coal = rm[(rm["plant"] == "Kalinganagar") & (rm["material"] == "Coking Coal")].iloc[0]
+    so_day, _ = project_stockout("Kalinganagar", "Coking Coal", extra_delay_days)
+    production_loss_t = max(0, extra_delay_days - 2) * 1800 + max(0, bf_constraint_pct) * 95
+    revenue_at_risk_cr = production_loss_t * 0.055
+    service_drop = max(0, extra_delay_days * 1.2 + demand_shock_pct * 0.35 + bf_constraint_pct * 0.08)
+    projected_otif = max(55, round(otif["otif_pct"].mean() - service_drop, 1))
+    coal_cover = max(0, round(kg_coal["days_cover"] - extra_delay_days * 0.9, 1))
+    return {
+        "stockout_day": so_day if so_day is not None else 30,
+        "production_loss_t": round(production_loss_t, 0),
+        "revenue_at_risk_cr": round(revenue_at_risk_cr, 1),
+        "projected_otif": projected_otif,
+        "coal_cover": coal_cover,
+    }
+
+
+# -----------------------------------------------------------------------------
+# Sidebar filters and scenario controls
+# -----------------------------------------------------------------------------
 with st.sidebar:
     st.header("🏭 Control Tower")
-    st.caption(f"Data as of **{TODAY:%d %b %Y}**  ·  simulated near-real-time feed")
-
-    st.markdown("**Unified from four systems**")
+    st.caption(f"Data timestamp: **{TODAY:%d %b %Y}** · synthetic near-real-time feed")
     st.markdown(
-        '<span class="source-badge">SAP · Procurement</span>'
-        '<span class="source-badge">TMS · Logistics</span><br>'
-        '<span class="source-badge">MES · Plant</span>'
-        '<span class="source-badge">CRM · Sales</span>',
+        '<span class="pill">SAP MM</span><span class="pill">TMS</span>'
+        '<span class="pill">MES</span><span class="pill">CRM</span>'
+        '<span class="pill">ESG Lake</span><span class="pill">Finance</span>',
         unsafe_allow_html=True,
     )
     st.divider()
 
     plants = sorted(rm["plant"].unique())
-    sel_plants = st.multiselect("Plant", plants, default=plants)
+    selected_plants = st.multiselect("Plant", plants, default=plants)
+    if not selected_plants:
+        selected_plants = plants
+
     only_exceptions = st.checkbox("Show only exceptions", value=False)
+
     st.divider()
+    st.subheader("Scenario Simulator")
+    extra_delay = st.slider("Additional coal shipment delay", 0, 10, 2, help="Adds delay days to inbound coal shipments.")
+    demand_shock = st.slider("Demand surge / shortfall (%)", -10, 20, 5)
+    bf_constraint = st.slider("Blast furnace constraint (%)", 0, 25, 8)
 
-    with st.expander("📋 Session task — answer by navigating", expanded=True):
+    st.divider()
+    with st.expander("Teaching tasks", expanded=True):
         st.markdown(
-            "1. **Which raw material is below safety stock, at which plant — "
-            "and when does the next inbound arrive?**\n\n"
-            "2. **Where is finished-goods inventory aging past threshold, "
-            "by grade & location?**\n\n"
-            "3. **What is today's OTIF / dispatch-vs-plan — and where's the gap?**"
+            "1. Identify the top material risk and its business impact.\n\n"
+            "2. Explain whether the OTIF issue is a logistics, inventory, or allocation problem.\n\n"
+            "3. Use the scenario sliders to test how delay changes production and revenue risk.\n\n"
+            "4. Recommend three actions for the morning control-tower meeting."
         )
-    st.caption("Facilitator: the answer key is in README.md")
 
-if not sel_plants:
-    sel_plants = plants  # never show an empty board
 
-rm_f = rm[rm["plant"].isin(sel_plants)]
-inb_f = inb[inb["plant"].isin(sel_plants)]
-
-# --------------------------------------------------------------------------- #
+# -----------------------------------------------------------------------------
 # Header
-# --------------------------------------------------------------------------- #
-st.title("Integrated Steel Supply Chain — Single Source of Truth")
-st.caption(
-    "Everyone had *a* number. This is *the* number. "
-    "Scroll the alerts, then use the tabs to work the three questions."
+# -----------------------------------------------------------------------------
+st.markdown('<div class="main-title">Integrated Steel Digital Control Tower</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="subtitle">Executive view of procurement, logistics, production, inventory, customer service, finance and ESG — converted into risks and actions.</div>',
+    unsafe_allow_html=True,
 )
 
-# --------------------------------------------------------------------------- #
-# Build alerts from the data (this is what makes it an execution tool)
-# --------------------------------------------------------------------------- #
-def project_stockout(plant, material, stock, daily_use, horizon=30):
-    """Day-by-day projection: burn consumption, add inbound on its ETA day.
-    Returns (stockout_day or None, biggest_inbound(shipment,qty,eta) or None)."""
-    events = (
-        inb[(inb["material"] == material) & (inb["plant"] == plant)]
-        .groupby("eta_days")["qty"].sum().to_dict()
-    )
-    s = stock
-    stockout_day = None
-    for day in range(1, horizon + 1):
-        s -= daily_use
-        s += events.get(day, 0)
-        if s < 0 and stockout_day is None:
-            stockout_day = day
-    relief = (
-        inb[(inb["material"] == material) & (inb["plant"] == plant)]
-        .sort_values("qty", ascending=False)
-    )
-    biggest = None if relief.empty else (
-        relief.iloc[0]["shipment_id"], int(relief.iloc[0]["qty"]),
-        int(relief.iloc[0]["eta_days"]),
-    )
-    return stockout_day, biggest
-
-
-def build_alerts():
-    alerts = []  # (severity, title, body, tag)
-
-    # Safety-stock breaches, cross-checked against a real inbound projection
-    breaches = rm_f[rm_f["below_safety"]]
-    for _, r in breaches.iterrows():
-        so_day, biggest = project_stockout(
-            r["plant"], r["material"], r["stock"], r["daily_use"]
-        )
-        if so_day is not None:
-            sev = "red"
-            if biggest:
-                ship, qty, eta = biggest
-                body = (
-                    f"{r['days_of_cover']:.1f}d cover. Day-by-day projection: "
-                    f"**stock-out ~day {so_day}**; largest relief ({ship}, "
-                    f"{qty:,} t) not until day {eta}. Production risk — small "
-                    f"in-transit rakes don't bridge it."
-                )
-            else:
-                body = (
-                    f"{r['days_of_cover']:.1f}d cover, below safety "
-                    f"({r['safety_days']:.1f}d). Projected stock-out day "
-                    f"{so_day}. **No inbound scheduled.**"
-                )
-        else:
-            sev = "amber"
-            body = (
-                f"{r['days_of_cover']:.1f}d cover, below the "
-                f"{r['safety_days']:.1f}d safety line, but scheduled inbound "
-                f"keeps stock positive across the horizon. No buffer — watch it."
-            )
-        alerts.append(
-            (sev, f"Safety-stock breach — {r['material']} @ {r['plant']}",
-             body, "SAP↔MES↔TMS")
-        )
-
-    # Delayed inbound
-    for _, r in inb_f[inb_f["status"] == "Delayed"].iterrows():
-        alerts.append(
-            ("amber", f"Inbound delayed — {r['shipment_id']} ({r['material']})",
-             f"{r['qty']:,} t for {r['plant']} · {r['reason']} · "
-             f"revised ETA {r['eta']:%d %b}. {r['position']}.", "TMS")
-        )
-
-    # FG aging breaches
-    for _, r in fg[fg["aging_breach"]].iterrows():
-        alerts.append(
-            ("amber", f"FG aging — {r['grade']} @ {r['location']}",
-             f"{r['qty']:,} t aged {r['age_days']}d vs {r['threshold_days']}d "
-             f"threshold. Working-capital & quality risk.", "MES↔CRM")
-        )
-
-    # OTIF gap
-    worst = otif.sort_values("otif_pct").iloc[0]
-    if worst["otif_pct"] < 90:
-        alerts.append(
-            ("amber", f"OTIF gap — {worst['region']} region",
-             f"OTIF {worst['otif_pct']}% (in-full {worst['in_full_pct']}% "
-             f"is the drag) · dispatch {worst['dispatch_pct']}% of plan · "
-             f"short {worst['gap_t']:,} t today.", "TMS↔CRM")
-        )
-
-    # Rake turnaround breach
-    for _, r in rake[rake["breach"]].iterrows():
-        alerts.append(
-            ("amber", f"Rake turnaround — {r['loading_point']}",
-             f"{r['turnaround_h']}h vs {r['target_h']}h target across "
-             f"{r['rakes']} rakes.", "TMS")
-        )
-
-    order = {"red": 0, "amber": 1, "green": 2}
-    return sorted(alerts, key=lambda a: order[a[0]])
-
-
-alerts = build_alerts()
-red_n = sum(1 for a in alerts if a[0] == "red")
-amber_n = sum(1 for a in alerts if a[0] == "amber")
-
-# --------------------------------------------------------------------------- #
+# -----------------------------------------------------------------------------
 # KPI row
-# --------------------------------------------------------------------------- #
-def cover(plant, material):
-    row = rm[(rm["plant"] == plant) & (rm["material"] == material)]
-    return float(row["days_of_cover"].iloc[0]) if not row.empty else np.nan
+# -----------------------------------------------------------------------------
+rm_sel = rm[rm["plant"].isin(selected_plants)]
+prod_sel = prod[prod["plant"].isin(selected_plants)]
+esg_sel = esg[esg["plant"].isin(selected_plants)]
 
+scenario = scenario_outputs(extra_delay, demand_shock, bf_constraint)
+risks = build_risks(extra_delay)
+critical_count = sum(1 for r in risks if r["severity"] == "red")
+watch_count = sum(1 for r in risks if r["severity"] == "amber")
 
-k1, k2, k3, k4, k5, k6 = st.columns(6)
-cc = cover("Kalinganagar", "Coking Coal")
-k1.metric("Coking coal cover · Kalinganagar", f"{cc:.1f} d",
-          "below 12d safety", delta_color="inverse")
-k2.metric("Iron ore cover · Kalinganagar",
-          f"{cover('Kalinganagar', 'Iron Ore'):.1f} d", "healthy",
-          delta_color="off")
-overall_otif = round((otif["actual_t"] * otif["otif_pct"]).sum()
-                     / otif["actual_t"].sum(), 1)
-k3.metric("OTIF today", f"{overall_otif:.1f}%", "vs 95% target",
-          delta_color="inverse")
-k4.metric("Safety-stock breaches", int(rm["below_safety"].sum()),
-          "action needed", delta_color="inverse")
-k5.metric("FG aging breaches", int(fg["aging_breach"].sum()),
-          "review", delta_color="inverse")
-k6.metric("Avg rake turnaround",
-          f"{rake['turnaround_h'].mean():.1f} h", "target 8.0 h",
-          delta_color="off")
+actual_prod = prod_sel["actual_t"].sum()
+plan_prod = prod_sel["planned_t"].sum()
+prod_attainment = actual_prod / plan_prod * 100 if plan_prod else 0
+weighted_otif = round((otif["actual_t"] * otif["otif_pct"]).sum() / otif["actual_t"].sum(), 1)
+inventory_value = rm_sel["inventory_value_cr"].sum() + fg["inventory_value_cr"].sum()
+avg_co2 = round(esg_sel["co2_t_per_tcs"].mean(), 2)
+
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+with c1:
+    kpi_card("Production attainment", f"{prod_attainment:.1f}%", f"{actual_prod:,.0f} t vs plan", "watch" if prod_attainment < 95 else "good")
+with c2:
+    kpi_card("OTIF today", f"{weighted_otif:.1f}%", "Target 95%", "bad" if weighted_otif < 90 else "watch")
+with c3:
+    kpi_card("Critical risks", str(critical_count), f"{watch_count} watch items", "bad" if critical_count else "watch")
+with c4:
+    kpi_card("Inventory value", f"₹{inventory_value:,.0f} Cr", "raw + finished goods", "neutral")
+with c5:
+    kpi_card("Revenue at risk", f"₹{scenario['revenue_at_risk_cr']:.1f} Cr", "scenario estimate", "bad" if scenario["revenue_at_risk_cr"] > 5 else "watch")
+with c6:
+    kpi_card("CO₂ intensity", f"{avg_co2:.2f}", "tCO₂/t crude steel", "bad" if avg_co2 > 2.15 else "watch")
 
 st.divider()
 
-# --------------------------------------------------------------------------- #
-# Exceptions & Alerts pane
-# --------------------------------------------------------------------------- #
-st.subheader(f"🚨 Exceptions & Alerts  ·  {red_n} critical · {amber_n} watch")
-st.caption("Ranked by severity. This pane is what turns a report into an execution tool.")
+# -----------------------------------------------------------------------------
+# Executive summary and material flow
+# -----------------------------------------------------------------------------
+left, right = st.columns([1.6, 1])
 
-acol1, acol2 = st.columns(2)
-for i, (sev, title, body, tag) in enumerate(alerts):
-    target = acol1 if i % 2 == 0 else acol2
-    target.markdown(
-        f'<div class="alert-card alert-{sev}">'
-        f'<div class="alert-title">{title}<span class="tag">{tag}</span></div>'
-        f'<div class="alert-body">{body}</div></div>',
+with left:
+    st.subheader("End-to-end material flow")
+    st.plotly_chart(make_sankey(selected_plants), use_container_width=True)
+
+with right:
+    st.subheader("AI operations briefing")
+    st.markdown(
+        f"""
+        <div class="action-card">
+            <div class="action-title">Morning summary</div>
+            <div class="action-body">
+            Kalinganagar coking coal remains the highest-risk constraint. Under the current scenario,
+            projected coal cover is <b>{scenario['coal_cover']:.1f} days</b>, projected OTIF is
+            <b>{scenario['projected_otif']:.1f}%</b>, and revenue at risk is approximately
+            <b>₹{scenario['revenue_at_risk_cr']:.1f} Cr</b>.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="action-card">
+            <div class="action-title">Recommended control-tower actions</div>
+            <div class="action-body">
+            1. Prioritize Dhamra → Kalinganagar rake placement for coking coal.<br>
+            2. Rebalance finished goods from aged West/North yards to open orders.<br>
+            3. Protect blast furnace schedule by reviewing coke blend and alternate procurement.<br>
+            4. Escalate West region in-full gap in S&OP huddle.
+            </div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
+# -----------------------------------------------------------------------------
+# Risks and actions
+# -----------------------------------------------------------------------------
+st.subheader(f"Exception and action centre · {critical_count} critical · {watch_count} watch")
+st.caption("Ranked by severity. Each alert is linked to root cause, owner and action.")
+
+r1, r2 = st.columns(2)
+for i, risk in enumerate(risks[:8]):
+    with r1 if i % 2 == 0 else r2:
+        render_risk_card(risk)
+
 st.divider()
 
-# --------------------------------------------------------------------------- #
-# Tabs — one per scenario question, plus logistics visibility
-# --------------------------------------------------------------------------- #
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["① Raw material & days of cover",
-     "② Finished-goods aging",
-     "③ OTIF / dispatch-vs-plan",
-     "④ In-transit · port · rake"]
+# -----------------------------------------------------------------------------
+# Detailed tabs
+# -----------------------------------------------------------------------------
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+    [
+        "① Raw materials",
+        "② Production",
+        "③ Finished goods",
+        "④ Dispatch & OTIF",
+        "⑤ Logistics",
+        "⑥ ESG & energy",
+        "⑦ Supplier risk",
+    ]
 )
 
-# ---- Tab 1 --------------------------------------------------------------- #
 with tab1:
-    st.markdown("**Q1 — Which raw material is below safety stock, and what's the inbound ETA?**")
-
-    view = rm_f.copy()
+    st.subheader("Raw material health and stockout projection")
+    view = rm_sel.copy()
     if only_exceptions:
         view = view[view["below_safety"]]
 
-    fig = px.bar(
-        view.sort_values("days_of_cover"),
-        x="days_of_cover", y="material", color="plant", orientation="h",
-        text="days_of_cover",
-        labels={"days_of_cover": "Days of cover", "material": ""},
-        title="Days of cover by material & plant (bar) vs safety threshold",
-        height=420,
-    )
-    fig.update_traces(textposition="outside")
-    fig.update_layout(legend_title_text="")
-    st.plotly_chart(fig, use_container_width=True)
+    c1, c2 = st.columns([1.2, 1])
+    with c1:
+        fig = px.bar(
+            view.sort_values("days_cover"),
+            x="days_cover",
+            y="material",
+            color="plant",
+            orientation="h",
+            text="days_cover",
+            labels={"days_cover": "Days of cover", "material": "Material"},
+            title="Days of cover by material and plant",
+            height=430,
+        )
+        fig.update_traces(textposition="outside")
+        fig.update_layout(legend_title_text="Plant")
+        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        heat = view.pivot_table(index="material", columns="plant", values="days_cover", aggfunc="mean")
+        fig = px.imshow(
+            heat,
+            text_auto=True,
+            aspect="auto",
+            title="Inventory heatmap: days of cover",
+            labels=dict(color="Days"),
+        )
+        fig.update_layout(height=430)
+        st.plotly_chart(fig, use_container_width=True)
 
-    show = view[["plant", "material", "stock", "safety_stock", "daily_use",
-                 "days_of_cover", "safety_days", "below_safety"]].rename(
-        columns={"stock": "stock (t)", "safety_stock": "safety (t)",
-                 "daily_use": "daily use (t)", "days_of_cover": "cover (d)",
-                 "safety_days": "safety (d)", "below_safety": "breach"}
-    )
+    st.markdown("**Raw material table**")
     st.dataframe(
-        show.style.apply(
-            lambda r: ["background-color:#3b1113" if r["breach"] else "" for _ in r],
-            axis=1,
+        view[[
+            "plant", "material", "category", "stock_t", "safety_stock_t", "daily_use_t",
+            "days_cover", "safety_days", "inventory_value_cr", "below_safety", "source"
+        ]].rename(
+            columns={
+                "stock_t": "stock (t)",
+                "safety_stock_t": "safety stock (t)",
+                "daily_use_t": "daily use (t)",
+                "days_cover": "cover (days)",
+                "safety_days": "safety (days)",
+                "inventory_value_cr": "inventory value (₹ Cr)",
+                "below_safety": "below safety",
+            }
         ),
-        use_container_width=True, hide_index=True,
+        use_container_width=True,
+        hide_index=True,
     )
 
-    st.markdown("**Matching inbound (from TMS):**")
+    st.markdown("**Inbound shipments linked to material risks**")
     st.dataframe(
-        inb_f[["material", "shipment_id", "mode", "qty", "origin",
-               "plant", "status", "eta", "eta_days", "reason", "position"]],
-        use_container_width=True, hide_index=True,
+        inb[inb["plant"].isin(selected_plants)][[
+            "material", "mode", "shipment_id", "qty_t", "origin", "destination", "plant", "status",
+            "eta", "eta_days", "delay_reason", "position", "source"
+        ]].rename(columns={"qty_t": "qty (t)", "eta_days": "ETA days"}),
+        use_container_width=True,
+        hide_index=True,
     )
 
-# ---- Tab 2 --------------------------------------------------------------- #
 with tab2:
-    st.markdown("**Q2 — Where is finished-goods inventory aging past threshold, by grade/location?**")
+    st.subheader("Production performance and bottleneck visibility")
+    view = prod_sel.copy()
+    if only_exceptions:
+        view = view[view["status"].isin(["At risk", "Watch"])]
 
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = px.bar(
+            view,
+            x="unit",
+            y="utilization_pct",
+            color="plant",
+            text="utilization_pct",
+            title="Unit utilization %",
+            labels={"utilization_pct": "Utilization %", "unit": "Unit"},
+            height=420,
+        )
+        fig.add_hline(y=95, line_dash="dash", annotation_text="95% target")
+        fig.update_xaxes(tickangle=-35)
+        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        fig = px.scatter(
+            view,
+            x="availability_pct",
+            y="yield_pct",
+            size="actual_t",
+            color="status",
+            hover_name="unit",
+            title="Availability vs yield — bubble size = production",
+            labels={"availability_pct": "Availability %", "yield_pct": "Yield %"},
+            height=420,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.dataframe(
+        view[[
+            "plant", "unit", "planned_t", "actual_t", "production_gap_t", "utilization_pct",
+            "availability_pct", "yield_pct", "energy_gcal_t", "status", "constraint", "source"
+        ]].rename(
+            columns={
+                "planned_t": "planned (t)",
+                "actual_t": "actual (t)",
+                "production_gap_t": "gap (t)",
+                "utilization_pct": "utilization %",
+                "availability_pct": "availability %",
+                "yield_pct": "yield %",
+                "energy_gcal_t": "energy GCal/t",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+with tab3:
+    st.subheader("Finished-goods aging and working capital")
     view = fg.copy()
     if only_exceptions:
         view = view[view["aging_breach"]]
 
-    fig = px.scatter(
-        view, x="age_days", y="grade", size="qty", color="location",
-        labels={"age_days": "Avg age (days)", "grade": ""},
-        title="FG aging — bubble size = tonnes; dots right of the line breach",
-        height=420,
-    )
-    fig.add_vline(x=30, line_dash="dash", line_color="#f59e0b",
-                  annotation_text="typical 30d threshold")
-    st.plotly_chart(fig, use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = px.scatter(
+            view,
+            x="age_days",
+            y="grade",
+            size="qty_t",
+            color="region",
+            hover_name="location",
+            title="FG aging — bubble size = tonnes",
+            labels={"age_days": "Age days", "grade": "Grade"},
+            height=420,
+        )
+        fig.add_vline(x=30, line_dash="dash", annotation_text="30d threshold")
+        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        fig = px.treemap(
+            view,
+            path=["region", "location", "grade"],
+            values="inventory_value_cr",
+            color="age_days",
+            title="Working capital locked in finished goods",
+        )
+        fig.update_layout(height=420)
+        st.plotly_chart(fig, use_container_width=True)
 
     st.dataframe(
-        view[["grade", "location", "qty", "age_days", "threshold_days",
-              "aging_breach"]].rename(
-            columns={"qty": "qty (t)", "age_days": "age (d)",
-                     "threshold_days": "threshold (d)", "aging_breach": "breach"}
-        ).style.apply(
-            lambda r: ["background-color:#3a2a10" if r["breach"] else "" for _ in r],
-            axis=1,
+        view[["grade", "location", "region", "qty_t", "age_days", "threshold_days", "inventory_value_cr", "aging_breach", "source"]].rename(
+            columns={
+                "qty_t": "qty (t)",
+                "age_days": "age (days)",
+                "threshold_days": "threshold (days)",
+                "inventory_value_cr": "value (₹ Cr)",
+                "aging_breach": "aging breach",
+            }
         ),
-        use_container_width=True, hide_index=True,
+        use_container_width=True,
+        hide_index=True,
     )
 
-# ---- Tab 3 --------------------------------------------------------------- #
-with tab3:
-    st.markdown("**Q3 — What's today's OTIF / dispatch-vs-plan, and where's the gap?**")
-
+with tab4:
+    st.subheader("Dispatch performance and customer service")
     c1, c2 = st.columns(2)
     with c1:
         fig = go.Figure()
-        fig.add_bar(x=otif["region"], y=otif["planned_t"], name="Planned",
-                    marker_color="#334155")
-        fig.add_bar(x=otif["region"], y=otif["actual_t"], name="Actual",
-                    marker_color="#22c55e")
-        fig.update_layout(barmode="group", title="Dispatch vs plan (t) by region",
-                          height=380, legend_title_text="")
+        fig.add_bar(x=otif["region"], y=otif["planned_t"], name="Planned")
+        fig.add_bar(x=otif["region"], y=otif["actual_t"], name="Actual")
+        fig.update_layout(barmode="group", title="Dispatch vs plan by region", height=410)
         st.plotly_chart(fig, use_container_width=True)
     with c2:
-        fig = px.bar(otif, x="region", y="otif_pct", text="otif_pct",
-                     title="OTIF % by region", height=380,
-                     labels={"otif_pct": "OTIF %", "region": ""})
-        fig.add_hline(y=95, line_dash="dash", line_color="#f59e0b",
-                      annotation_text="95% target")
-        fig.update_traces(textposition="outside", marker_color="#38bdf8")
+        fig = px.bar(
+            otif,
+            x="region",
+            y="otif_pct",
+            text="otif_pct",
+            title="OTIF % by region",
+            labels={"otif_pct": "OTIF %"},
+            height=410,
+        )
+        fig.add_hline(y=95, line_dash="dash", annotation_text="Target")
+        fig.update_traces(textposition="outside")
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.info(
+        "Teaching note: West has a customer-service problem driven mainly by the in-full component. "
+        "That points to inventory allocation/availability rather than pure transport delay."
+    )
+    st.dataframe(
+        otif[["region", "planned_t", "actual_t", "gap_t", "dispatch_pct", "on_time_pct", "in_full_pct", "otif_pct", "constraint", "source"]].rename(
+            columns={
+                "planned_t": "planned (t)",
+                "actual_t": "actual (t)",
+                "gap_t": "gap (t)",
+                "dispatch_pct": "dispatch %",
+                "on_time_pct": "on-time %",
+                "in_full_pct": "in-full %",
+                "otif_pct": "OTIF %",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+with tab5:
+    st.subheader("Logistics visibility: port, rail, road and yard assets")
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = px.bar(
+            logi.sort_values("turnaround_h"),
+            x="turnaround_h",
+            y="node",
+            orientation="h",
+            text="turnaround_h",
+            title="Rake turnaround vs 8h target",
+            labels={"turnaround_h": "Hours", "node": "Node"},
+            height=420,
+        )
+        fig.add_vline(x=8, line_dash="dash", annotation_text="Target")
+        fig.update_traces(textposition="outside")
+        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        fig = px.scatter(
+            logi,
+            x="waiting_rakes",
+            y="asset_health_pct",
+            size="active_rakes",
+            color="breach",
+            hover_name="node",
+            title="Yard congestion and asset health",
+            labels={"waiting_rakes": "Waiting rakes", "asset_health_pct": "Asset health %"},
+            height=420,
+        )
         st.plotly_chart(fig, use_container_width=True)
 
     st.dataframe(
-        otif[["region", "planned_t", "actual_t", "gap_t", "dispatch_pct",
-              "on_time_pct", "in_full_pct", "otif_pct"]].rename(
-            columns={"planned_t": "planned (t)", "actual_t": "actual (t)",
-                     "gap_t": "gap (t)", "dispatch_pct": "dispatch %",
-                     "on_time_pct": "on-time %", "in_full_pct": "in-full %",
-                     "otif_pct": "OTIF %"}
+        logi.rename(
+            columns={
+                "turnaround_h": "turnaround (h)",
+                "target_h": "target (h)",
+                "active_rakes": "active rakes",
+                "waiting_rakes": "waiting rakes",
+                "asset_health_pct": "asset health %",
+            }
         ),
-        use_container_width=True, hide_index=True,
-    )
-    st.info(
-        "Read the split: West OTIF is dragged by **in-full**, not on-time — "
-        "trucks left on schedule but short, pointing at an availability/allocation "
-        "problem, not a transport one."
+        use_container_width=True,
+        hide_index=True,
     )
 
-# ---- Tab 4 --------------------------------------------------------------- #
-with tab4:
-    st.markdown("**In-transit, port & rake visibility (TMS)** — the physical picture behind the numbers.")
-
-    c1, c2 = st.columns([1.3, 1])
+with tab6:
+    st.subheader("ESG, energy and decarbonization signals")
+    view = esg_sel.copy()
+    c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**Inbound pipeline**")
-        st.dataframe(
-            inb[["material", "shipment_id", "mode", "qty", "origin",
-                 "destination", "plant", "status", "eta", "eta_days", "position"]],
-            use_container_width=True, hide_index=True,
-        )
+        fig = go.Figure()
+        fig.add_bar(x=view["plant"], y=view["co2_t_per_tcs"], name="Actual")
+        fig.add_bar(x=view["plant"], y=view["co2_target"], name="Target")
+        fig.update_layout(barmode="group", title="CO₂ intensity: actual vs target", height=410, yaxis_title="tCO₂/t crude steel")
+        st.plotly_chart(fig, use_container_width=True)
     with c2:
         fig = px.bar(
-            rake.sort_values("turnaround_h"),
-            x="turnaround_h", y="loading_point", orientation="h",
-            text="turnaround_h", labels={"turnaround_h": "Hours", "loading_point": ""},
-            title="Rake turnaround vs 8h target", height=340,
+            view,
+            x="plant",
+            y="energy_gcal_tcs",
+            text="energy_gcal_tcs",
+            title="Specific energy consumption",
+            labels={"energy_gcal_tcs": "GCal/t crude steel"},
+            height=410,
         )
-        fig.add_vline(x=8, line_dash="dash", line_color="#f59e0b")
-        fig.update_traces(textposition="outside", marker_color="#a78bfa")
         st.plotly_chart(fig, use_container_width=True)
 
+    st.dataframe(
+        view.rename(
+            columns={
+                "co2_t_per_tcs": "CO₂ t/tcs",
+                "co2_target": "CO₂ target",
+                "energy_gcal_tcs": "energy GCal/tcs",
+                "energy_target": "energy target",
+                "scrap_mix_pct": "scrap mix %",
+                "scrap_target_pct": "scrap target %",
+                "co2_gap_pct": "CO₂ gap %",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+with tab7:
+    st.subheader("Supplier risk and procurement performance")
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = px.scatter(
+            supp,
+            x="otif_pct",
+            y="avg_delay_days",
+            size="monthly_spend_cr",
+            color="risk_score",
+            hover_name="supplier",
+            title="Supplier performance: OTIF vs delay",
+            labels={"otif_pct": "Supplier OTIF %", "avg_delay_days": "Avg delay days"},
+            height=420,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        fig = px.bar(
+            supp.sort_values("risk_score", ascending=False),
+            x="supplier",
+            y="risk_score",
+            color="material",
+            title="Supplier risk score",
+            labels={"risk_score": "Risk score"},
+            height=420,
+        )
+        fig.update_xaxes(tickangle=-35)
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.dataframe(
+        supp.rename(
+            columns={
+                "monthly_spend_cr": "monthly spend (₹ Cr)",
+                "otif_pct": "supplier OTIF %",
+                "avg_delay_days": "avg delay days",
+                "quality_ppm": "quality PPM",
+                "risk_score": "risk score",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+# -----------------------------------------------------------------------------
+# Scenario panel
+# -----------------------------------------------------------------------------
 st.divider()
+st.subheader("Scenario impact summary")
+s1, s2, s3, s4, s5 = st.columns(5)
+with s1:
+    kpi_card("Coal cover", f"{scenario['coal_cover']:.1f} d", "Kalinganagar", "bad" if scenario["coal_cover"] < 5 else "watch")
+with s2:
+    kpi_card("Projected stockout", f"Day {scenario['stockout_day']}", "30-day horizon", "bad" if scenario["stockout_day"] < 10 else "watch")
+with s3:
+    kpi_card("Production loss", f"{scenario['production_loss_t']:,.0f} t", "scenario estimate", "bad" if scenario["production_loss_t"] > 5000 else "watch")
+with s4:
+    kpi_card("Projected OTIF", f"{scenario['projected_otif']:.1f}%", "after demand/delay shock", "bad" if scenario["projected_otif"] < 85 else "watch")
+with s5:
+    kpi_card("Revenue risk", f"₹{scenario['revenue_at_risk_cr']:.1f} Cr", "not accounting for recovery", "bad" if scenario["revenue_at_risk_cr"] > 5 else "watch")
+
 st.caption(
-    "Synthetic data for training. The coking-coal-at-Kalinganagar exception is "
-    "seeded deliberately to mirror the caselet. Do not load confidential data "
-    "into a shared demo."
+    "Synthetic training dashboard. Figures are illustrative and designed for executive education, case discussion and hands-on dashboard teaching."
 )
